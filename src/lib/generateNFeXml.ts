@@ -80,11 +80,13 @@ function padLeft(v: string, len: number, ch = "0") {
   return v.padStart(len, ch);
 }
 
-function sanitizeUF(v: string, fallback: UF): UF {
-  const uf = (v?.trim() || fallback).toUpperCase() as UF;
+function sanitizeUF(v: string | undefined | null, fallback: UF): UF {
+  const uf = (v ?? "").trim().toUpperCase();
+  if (!uf) return fallback;
   if (!(uf in UF_TO_CUF)) return fallback;
-  return uf;
+  return uf as UF;
 }
+
 
 function parseMunicipioCodigo(v: string): string {
   // tenta achar 7 dígitos em qualquer lugar do texto
