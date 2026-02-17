@@ -1,0 +1,1 @@
+ALTER TABLE public.emitentes ADD COLUMN cert_senha text DEFAULT NULL;

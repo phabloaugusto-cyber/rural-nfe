@@ -1,0 +1,9 @@
+{
+  "appId": "app.lovable.c15580be174a4c96ad3f8df5d8ad4fb3",
+  "appName": "NF-e Leilão",
+  "webDir": "dist",
+  "server": {
+    "url": "https://c15580be-174a-4c96-ad3f-8df5d8ad4fb3.lovableproject.com?forceHideBadge=true",
+    "cleartext": true
+  }
+}
