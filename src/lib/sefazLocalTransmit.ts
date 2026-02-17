@@ -1,11 +1,11 @@
 /**
- * Transmissão de NF-e via proxy mTLS (VPS ou local).
+ * Transmissão de NF-e via proxy mTLS (Google Cloud VPS).
  * 
- * O frontend chama edge functions que fazem relay para o proxy VPS,
- * eliminando problemas de mixed-content e localhost no celular.
+ * O frontend chama diretamente o proxy hospedado no Google Cloud,
+ * eliminando problemas de localhost e permitindo uso no celular.
  */
 
-import { supabase } from "@/integrations/supabase/client";
+const PROXY_BASE_URL = "http://34.95.241.205:3001";
 
 interface ProxyPayload {
   sefaz_url: string;
@@ -21,29 +21,37 @@ interface ProxyResponse {
 }
 
 /**
- * Verifica se o proxy SEFAZ está online (via edge function)
+ * Verifica se o proxy SEFAZ está online
  */
 export async function checkProxyHealth(): Promise<boolean> {
   try {
-    const { data, error } = await supabase.functions.invoke("proxy-health");
-    if (error) return false;
-    return data?.online ?? false;
+    const response = await fetch(`${PROXY_BASE_URL}/health`);
+    if (!response.ok) return false;
+
+    const data = await response.json();
+    return data?.status === "ok";
   } catch {
     return false;
   }
 }
 
 /**
- * Envia SOAP XML assinado ao proxy para transmissão mTLS à SEFAZ (via edge function relay)
+ * Envia SOAP XML assinado ao proxy para transmissão mTLS à SEFAZ
  */
 export async function transmitViLocalProxy(payload: ProxyPayload): Promise<ProxyResponse> {
-  const { data, error } = await supabase.functions.invoke("proxy-relay", {
-    body: payload,
+  const response = await fetch(`${PROXY_BASE_URL}/transmit`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
   });
 
-  if (error) {
-    throw new Error(error.message || "Erro ao chamar proxy-relay");
+  if (!response.ok) {
+    throw new Error(`Erro HTTP proxy: ${response.status}`);
   }
+
+  const data = await response.json();
 
   if (!data?.success) {
     throw new Error(data?.error || "Proxy retornou erro");
