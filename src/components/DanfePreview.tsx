@@ -1,385 +1,327 @@
-import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
-
-import type { NFeData } from "@/types/nfe";
-import { formatCPF, formatCNPJ, formatIE, formatCEP, formatPhone } from "@/lib/utils";
+import React, { forwardRef } from "react";
+import type { NFeData } from "@/lib/generateNFeXml";
 
 interface DanfePreviewProps {
-  nfe: NFeData;
-  protocolo?: string | null;
-  chaveAcesso?: string | null;
-  qrCodeUrl?: string | null;
-  // se você já usa mais props no seu projeto, mantenha aqui
+  nfeData: NFeData;
+  protocolo?: string;
+  chaveAcesso?: string;
+  numero?: string;
+  serie?: string;
 }
 
-export const DanfePreview = ({ nfe, protocolo, chaveAcesso, qrCodeUrl }: DanfePreviewProps) => {
-  const emissao = nfe?.ide?.dhEmi ? new Date(nfe.ide.dhEmi) : new Date();
-  const dataEmissao = format(emissao, "dd/MM/yyyy", { locale: ptBR });
-  const horaEmissao = format(emissao, "HH:mm", { locale: ptBR });
+const DanfePreview = forwardRef<HTMLDivElement, DanfePreviewProps>(
+  ({ nfeData, protocolo, chaveAcesso, numero, serie }, ref) => {
+    const formatMoney = (value: number) =>
+      (value ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  const emit = nfe?.emit || ({} as any);
-  const dest = nfe?.dest || ({} as any);
-  const transp = (nfe as any)?.transp || {};
+    const formatDate = (iso?: string) => {
+      if (!iso) return "";
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return iso;
+      return d.toLocaleDateString("pt-BR");
+    };
 
-  const itens = (nfe as any)?.det || [];
+    return (
+      <div
+        ref={ref}
+        className="mx-auto bg-white text-black font-sans print:shadow-none relative danfe-root"
+        style={{
+          width: "210mm",
+          height: "297mm",
+          padding: "6mm",
+          boxSizing: "border-box",
+          fontSize: "9px",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <style>{`
+          @page { size: A4; margin: 0; }
+          html, body { width: 210mm; height: 297mm; }
+          .danfe-root { background: #fff; }
 
-  // =========================
-  // Helpers
-  // =========================
-  const safe = (v: any) => (v === null || v === undefined ? "" : String(v));
-  const onlyDigits = (s: any) => safe(s).replace(/\D+/g, "");
-  const n = (v: any) => {
-    const x = Number(String(v).replace(",", "."));
-    return Number.isFinite(x) ? x : 0;
-  };
-  const money = (v: any) =>
-    n(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          /* fluxo vertical para permitir "esticar" o DANFE até o final da folha */
+          .danfe-flow { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
 
-  // =========================
-  // Totais
-  // =========================
-  const totalProdutos = (nfe as any)?.total?.ICMSTot?.vProd ?? 0;
-  const totalNF = (nfe as any)?.total?.ICMSTot?.vNF ?? totalProdutos;
+          /* este é o “preenchedor” de espaço */
+          .danfe-spacer { flex: 1 1 auto; min-height: 0; }
 
-  // =========================
-  // Layout (A4 útil)
-  // =========================
-  // IMPORTANTE:
-  // O seu DanfePage.tsx coloca a imagem no PDF com MARGIN_MM = 5.
-  // Então a “área útil” da página vira:
-  // A4 (210x297) - 10mm = 200x287.
-  // Se o HTML tiver EXATAMENTE essa proporção, o PDF preenche certinho.
-  const A4_USEFUL_W = "200mm";
-  const A4_USEFUL_H = "287mm";
+          /* evita quebra estranha em impressão */
+          .danfe-avoid-break { break-inside: avoid; page-break-inside: avoid; }
 
-  return (
-    <>
-      <style>{`
-        @page { size: A4; margin: 0; }
+          @media print {
+            body { margin: 0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          }
+        `}</style>
 
-        @media print {
-          html, body { margin: 0 !important; padding: 0 !important; }
-        }
-
-        /* Raiz do DANFE na área útil do PDF (A4 - margens do PDF) */
-        .danfe-root {
-          width: ${A4_USEFUL_W};
-          min-height: ${A4_USEFUL_H};
-          box-sizing: border-box;
-          padding: 6mm;
-          background: #fff;
-          color: #000;
-          font-family: Arial, Helvetica, sans-serif;
-          font-size: 9px;
-          display: flex;
-          flex-direction: column;
-        }
-
-        /* Spacer que cresce quando sobra espaço e “some” quando tem mais itens */
-        .danfe-spacer {
-          flex: 1 1 auto;
-          min-height: 0;
-        }
-
-        /* Ajuda a evitar quebra estranha */
-        @media print {
-          .danfe-root { box-shadow: none !important; }
-        }
-
-        /* Pequenos ajustes visuais (opcional) */
-        .danfe-box {
-          border: 1px solid #000;
-        }
-        .danfe-row {
-          display: flex;
-          gap: 2mm;
-        }
-        .danfe-col {
-          flex: 1;
-        }
-        .danfe-title {
-          font-weight: 700;
-          text-transform: uppercase;
-        }
-        .danfe-small {
-          font-size: 8px;
-        }
-      `}</style>
-
-      <div className="danfe-root">
-        {/* ====== TOPO “RECEBEMOS DE” ====== */}
-        <div className="danfe-box" style={{ padding: "1.5mm" }}>
-          <div className="danfe-small">
-            RECEBEMOS DE <b>{safe(emit?.xNome)}</b> OS PRODUTOS / SERVIÇOS CONSTANTES DA NOTA FISCAL INDICADA AO LADO.
-            DEST.: <b>{safe(dest?.xNome)}</b> - VALOR TOTAL: <b>R$ {money(totalNF)}</b>
+        {/* Marca d’água CANCELADA (se aplicável) */}
+        {nfeData?.cancelada ? (
+          <div
+            className="absolute inset-0 flex items-center justify-center pointer-events-none"
+            style={{ opacity: 0.15, zIndex: 10 }}
+          >
+            <div style={{ transform: "rotate(-20deg)", fontSize: "64px", fontWeight: 800 }}>
+              CANCELADA
+            </div>
           </div>
+        ) : null}
 
-          <div className="danfe-row" style={{ marginTop: "1mm" }}>
-            <div className="danfe-col danfe-box" style={{ padding: "1mm" }}>
-              <div className="danfe-small">DATA DO RECEBIMENTO</div>
-              <div style={{ height: "4mm" }} />
-            </div>
-            <div className="danfe-col danfe-box" style={{ padding: "1mm" }}>
-              <div className="danfe-small">IDENTIFICAÇÃO E ASSINATURA DO RECEBEDOR</div>
-              <div style={{ height: "4mm" }} />
-            </div>
-            <div className="danfe-box" style={{ padding: "1mm", width: "28mm" }}>
-              <div className="danfe-title">NF-e</div>
-              <div className="danfe-small">
-                Nº {safe(nfe?.ide?.nNF)} <br />
-                SÉRIE {safe(nfe?.ide?.serie)}
+        <div className="danfe-flow">
+          {/* ===== CANHOTO ===== */}
+          <div
+            data-pdf-section
+            className="border border-black p-1 danfe-avoid-break"
+            style={{ marginBottom: "2mm" }}
+          >
+            <div className="flex justify-between text-[8px]">
+              <div className="flex-1 pr-2">
+                RECEBEMOS DE <b>{nfeData.emit?.xNome}</b> OS PRODUTOS / SERVIÇOS CONSTANTES DA NOTA FISCAL INDICADA
+                AO LADO. DEST.: <b>{nfeData.dest?.xNome}</b> – VALOR TOTAL:{" "}
+                <b>R$ {formatMoney(nfeData.total?.vNF ?? 0)}</b>
               </div>
-            </div>
-          </div>
-        </div>
-
-        {/* ====== IDENTIFICAÇÃO DO EMITENTE + DANFE + CHAVE ====== */}
-        <div className="danfe-row" style={{ marginTop: "2mm" }}>
-          <div className="danfe-col danfe-box" style={{ padding: "2mm" }}>
-            <div className="danfe-small danfe-title">IDENTIFICAÇÃO DO EMITENTE</div>
-            <div style={{ marginTop: "1mm" }}>
-              <b>{safe(emit?.xNome)}</b>
-            </div>
-            <div className="danfe-small">{safe(emit?.enderEmit?.xLgr)}</div>
-            <div className="danfe-small">
-              {safe(emit?.enderEmit?.xMun)} - {safe(emit?.enderEmit?.UF)} CEP: {formatCEP(safe(emit?.enderEmit?.CEP))}
-            </div>
-          </div>
-
-          <div className="danfe-box" style={{ width: "44mm", padding: "2mm", textAlign: "center" }}>
-            <div className="danfe-title">DANFE</div>
-            <div className="danfe-small" style={{ marginTop: "1mm" }}>
-              DOCUMENTO AUXILIAR DA NOTA FISCAL ELETRÔNICA
-            </div>
-            <div className="danfe-row" style={{ justifyContent: "center", marginTop: "2mm" }}>
-              <div className="danfe-box" style={{ width: "6mm", height: "6mm", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {(nfe as any)?.ide?.tpNF === "0" || (nfe as any)?.ide?.tpNF === 0 ? "0" : "1"}
-              </div>
-              <div className="danfe-small" style={{ marginLeft: "2mm" }}>
-                - ENTRADA &nbsp; 1 - SAÍDA
-              </div>
-            </div>
-
-            <div className="danfe-small" style={{ marginTop: "2mm" }}>
-              Nº {safe(nfe?.ide?.nNF)} fl. 1/1 <br />
-              SÉRIE {safe(nfe?.ide?.serie)}
-            </div>
-          </div>
-
-          <div className="danfe-col danfe-box" style={{ padding: "2mm" }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: "1mm" }}>
-              <div className="danfe-box" style={{ padding: "1mm", textAlign: "center" }}>
-                <div className="danfe-small danfe-title">CHAVE DE ACESSO</div>
-                <div className="danfe-small" style={{ wordBreak: "break-all" }}>
-                  {safe(chaveAcesso)}
+              <div className="w-[22mm] text-right">
+                <div>
+                  <b>NF-e</b>
                 </div>
-                <div className="danfe-small">
-                  Consulte a autenticidade no portal nacional da NF-e
+                <div>
+                  Nº <b>{numero ?? nfeData.ide?.nNF}</b>
+                </div>
+                <div>
+                  SÉRIE <b>{serie ?? nfeData.ide?.serie}</b>
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-1">
+              <div className="border border-black h-[8mm] flex items-end p-1 text-[7px]">
+                DATA DO RECEBIMENTO
+              </div>
+              <div className="border border-black h-[8mm] flex items-end p-1 text-[7px]">
+                IDENTIFICAÇÃO E ASSINATURA DO RECEBEDOR
+              </div>
+            </div>
+          </div>
+
+          {/* ===== CABEÇALHO DANFE ===== */}
+          <div data-pdf-section className="border border-black danfe-avoid-break" style={{ marginBottom: "2mm" }}>
+            <div className="grid grid-cols-12">
+              <div className="col-span-5 border-r border-black p-2">
+                <div className="text-[8px] font-bold">IDENTIFICAÇÃO DO EMITENTE</div>
+                <div className="mt-1">
+                  <div className="text-[11px] font-bold">{nfeData.emit?.xNome}</div>
+                  <div className="text-[8px]">
+                    {nfeData.emit?.enderEmit?.xLgr}, {nfeData.emit?.enderEmit?.nro}
+                  </div>
+                  <div className="text-[8px]">
+                    {nfeData.emit?.enderEmit?.xMun} - {nfeData.emit?.enderEmit?.UF} CEP:{" "}
+                    {nfeData.emit?.enderEmit?.CEP}
+                  </div>
                 </div>
               </div>
 
-              <div className="danfe-box" style={{ padding: "1mm", textAlign: "center" }}>
-                <div className="danfe-small danfe-title">PROTOCOLO DE AUTORIZAÇÃO DE USO</div>
-                <div className="danfe-small">{safe(protocolo)}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* ====== NATUREZA / CNPJ / IE ====== */}
-        <div className="danfe-box" style={{ marginTop: "2mm", padding: "1.5mm" }}>
-          <div className="danfe-row">
-            <div className="danfe-col">
-              <div className="danfe-small danfe-title">NATUREZA DA OPERAÇÃO</div>
-              <div className="danfe-small">{safe(nfe?.ide?.natOp)}</div>
-            </div>
-            <div style={{ width: "40mm" }}>
-              <div className="danfe-small danfe-title">CNPJ/CPF</div>
-              <div className="danfe-small">{formatCNPJ(onlyDigits(emit?.CNPJ || ""))}</div>
-            </div>
-            <div style={{ width: "40mm" }}>
-              <div className="danfe-small danfe-title">INSCRIÇÃO ESTADUAL</div>
-              <div className="danfe-small">{formatIE(safe(emit?.IE))}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* ====== DESTINATÁRIO ====== */}
-        <div className="danfe-box" style={{ marginTop: "2mm", padding: "1.5mm" }}>
-          <div className="danfe-small danfe-title">DESTINATÁRIO / REMETENTE</div>
-
-          <div className="danfe-row" style={{ marginTop: "1mm" }}>
-            <div className="danfe-col">
-              <div className="danfe-small danfe-title">NOME / RAZÃO SOCIAL</div>
-              <div className="danfe-small">{safe(dest?.xNome)}</div>
-            </div>
-
-            <div style={{ width: "45mm" }}>
-              <div className="danfe-small danfe-title">CNPJ / CPF</div>
-              {onlyDigits(dest?.CNPJ)?.length === 14 ? (
-                <div className="danfe-small">{formatCNPJ(onlyDigits(dest?.CNPJ))}</div>
-              ) : (
-                <div className="danfe-small">{formatCPF(onlyDigits(dest?.CPF))}</div>
-              )}
-            </div>
-
-            <div style={{ width: "30mm" }}>
-              <div className="danfe-small danfe-title">DATA DA EMISSÃO</div>
-              <div className="danfe-small">{dataEmissao}</div>
-            </div>
-          </div>
-
-          <div className="danfe-row" style={{ marginTop: "1mm" }}>
-            <div className="danfe-col">
-              <div className="danfe-small danfe-title">ENDEREÇO</div>
-              <div className="danfe-small">{safe(dest?.enderDest?.xLgr)}</div>
-            </div>
-            <div style={{ width: "40mm" }}>
-              <div className="danfe-small danfe-title">BAIRRO / DISTRITO</div>
-              <div className="danfe-small">{safe(dest?.enderDest?.xBairro)}</div>
-            </div>
-            <div style={{ width: "30mm" }}>
-              <div className="danfe-small danfe-title">DATA SAÍDA/ENTRADA</div>
-              <div className="danfe-small">{dataEmissao}</div>
-            </div>
-          </div>
-
-          <div className="danfe-row" style={{ marginTop: "1mm" }}>
-            <div className="danfe-col">
-              <div className="danfe-small danfe-title">MUNICÍPIO</div>
-              <div className="danfe-small">{safe(dest?.enderDest?.xMun)}</div>
-            </div>
-            <div style={{ width: "25mm" }}>
-              <div className="danfe-small danfe-title">UF</div>
-              <div className="danfe-small">{safe(dest?.enderDest?.UF)}</div>
-            </div>
-            <div style={{ width: "40mm" }}>
-              <div className="danfe-small danfe-title">CEP</div>
-              <div className="danfe-small">{formatCEP(safe(dest?.enderDest?.CEP))}</div>
-            </div>
-            <div style={{ width: "40mm" }}>
-              <div className="danfe-small danfe-title">FONE / FAX</div>
-              <div className="danfe-small">{formatPhone(safe(dest?.enderDest?.fone))}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* ====== CÁLCULO DO IMPOSTO (RESUMO) ====== */}
-        <div className="danfe-box" style={{ marginTop: "2mm", padding: "1.5mm" }}>
-          <div className="danfe-small danfe-title">CÁLCULO DO IMPOSTO</div>
-          <div className="danfe-row" style={{ marginTop: "1mm" }}>
-            <div className="danfe-col danfe-box" style={{ padding: "1mm" }}>
-              <div className="danfe-small danfe-title">BASE DE CÁLCULO DO ICMS</div>
-              <div className="danfe-small">{money((nfe as any)?.total?.ICMSTot?.vBC ?? 0)}</div>
-            </div>
-            <div className="danfe-col danfe-box" style={{ padding: "1mm" }}>
-              <div className="danfe-small danfe-title">VALOR DO ICMS</div>
-              <div className="danfe-small">{money((nfe as any)?.total?.ICMSTot?.vICMS ?? 0)}</div>
-            </div>
-            <div className="danfe-col danfe-box" style={{ padding: "1mm" }}>
-              <div className="danfe-small danfe-title">VALOR TOTAL DOS PRODUTOS</div>
-              <div className="danfe-small">{money(totalProdutos)}</div>
-            </div>
-            <div className="danfe-col danfe-box" style={{ padding: "1mm" }}>
-              <div className="danfe-small danfe-title">VALOR TOTAL DA NOTA</div>
-              <div className="danfe-small">{money(totalNF)}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* ====== TRANSPORTADOR ====== */}
-        <div className="danfe-box" style={{ marginTop: "2mm", padding: "1.5mm" }}>
-          <div className="danfe-small danfe-title">TRANSPORTADOR / VOLUMES TRANSPORTADOS</div>
-          <div className="danfe-row" style={{ marginTop: "1mm" }}>
-            <div className="danfe-col">
-              <div className="danfe-small danfe-title">RAZÃO SOCIAL</div>
-              <div className="danfe-small">{safe(transp?.transporta?.xNome)}</div>
-            </div>
-            <div style={{ width: "45mm" }}>
-              <div className="danfe-small danfe-title">FRETE POR CONTA</div>
-              <div className="danfe-small">{safe(transp?.modFrete)}</div>
-            </div>
-            <div style={{ width: "45mm" }}>
-              <div className="danfe-small danfe-title">PLACA DO VEÍCULO</div>
-              <div className="danfe-small">{safe(transp?.veicTransp?.placa)}</div>
-            </div>
-            <div style={{ width: "20mm" }}>
-              <div className="danfe-small danfe-title">UF</div>
-              <div className="danfe-small">{safe(transp?.veicTransp?.UF)}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* ====== ITENS ====== */}
-        <div className="danfe-box" style={{ marginTop: "2mm", padding: "1.5mm" }}>
-          <div className="danfe-small danfe-title">DADOS DO PRODUTO / SERVIÇOS</div>
-
-          <div className="danfe-box" style={{ marginTop: "1mm" }}>
-            <div className="danfe-row danfe-small" style={{ padding: "1mm", fontWeight: 700 }}>
-              <div style={{ width: "10mm" }}>CÓD.</div>
-              <div style={{ flex: 1 }}>DESCRIÇÃO DO PRODUTO / SERVIÇO</div>
-              <div style={{ width: "18mm" }}>NCM/SH</div>
-              <div style={{ width: "12mm" }}>CFOP</div>
-              <div style={{ width: "10mm" }}>UN</div>
-              <div style={{ width: "18mm", textAlign: "right" }}>QUANT.</div>
-              <div style={{ width: "18mm", textAlign: "right" }}>V. UNIT.</div>
-              <div style={{ width: "22mm", textAlign: "right" }}>V. TOTAL</div>
-            </div>
-
-            {itens.map((it: any, idx: number) => {
-              const p = it?.prod || {};
-              return (
-                <div key={idx} className="danfe-row danfe-small" style={{ padding: "1mm", borderTop: "1px solid #000" }}>
-                  <div style={{ width: "10mm" }}>{safe(p?.cProd)}</div>
-                  <div style={{ flex: 1 }}>{safe(p?.xProd)}</div>
-                  <div style={{ width: "18mm" }}>{safe(p?.NCM)}</div>
-                  <div style={{ width: "12mm" }}>{safe(p?.CFOP)}</div>
-                  <div style={{ width: "10mm" }}>{safe(p?.uCom)}</div>
-                  <div style={{ width: "18mm", textAlign: "right" }}>{money(p?.qCom)}</div>
-                  <div style={{ width: "18mm", textAlign: "right" }}>{money(p?.vUnCom)}</div>
-                  <div style={{ width: "22mm", textAlign: "right" }}>{money(p?.vProd)}</div>
+              <div className="col-span-3 border-r border-black p-2 text-center">
+                <div className="font-bold text-[12px]">DANFE</div>
+                <div className="text-[7px] leading-tight">
+                  DOCUMENTO AUXILIAR DA
+                  <br />
+                  NOTA FISCAL ELETRÔNICA
                 </div>
-              );
-            })}
+                <div className="mt-2 border border-black inline-block px-2 py-1 text-[10px] font-bold">
+                  {nfeData.ide?.tpNF === "0" ? "0 - ENTRADA" : "1 - SAÍDA"}
+                </div>
+                <div className="mt-2 text-[8px]">
+                  Nº <b>{numero ?? nfeData.ide?.nNF}</b> fl. 1/1
+                </div>
+                <div className="text-[8px]">
+                  SÉRIE <b>{serie ?? nfeData.ide?.serie}</b>
+                </div>
+              </div>
+
+              <div className="col-span-4 p-2">
+                <div className="border border-black p-1 text-center text-[7px]">
+                  <div className="font-bold">CHAVE DE ACESSO</div>
+                  <div className="mt-1 text-[8px] font-mono break-all">{chaveAcesso ?? nfeData.chave}</div>
+                  <div className="mt-1">Consulta de autenticidade no portal nacional da NF-e</div>
+                </div>
+
+                <div className="border border-black p-1 mt-1 text-center text-[7px]">
+                  <div className="font-bold">PROTOCOLO DE AUTORIZAÇÃO DE USO</div>
+                  <div className="text-[8px]">{protocolo ?? nfeData.protocolo ?? ""}</div>
+                  <div className="text-[8px]">{nfeData.dhRecbto ? formatDate(nfeData.dhRecbto) : ""}</div>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
 
-        {/* ✅ ESTE É O “PREENCHEDOR” QUE SOME OU CRESCE AUTOMATICAMENTE */}
-        <div className="danfe-spacer" />
+          {/* ===== NATUREZA / IE / CNPJ ===== */}
+          <div data-pdf-section className="border border-black danfe-avoid-break" style={{ marginBottom: "2mm" }}>
+            <div className="grid grid-cols-12">
+              <div className="col-span-6 border-r border-black p-1">
+                <div className="text-[7px]">NATUREZA DA OPERAÇÃO</div>
+                <div className="text-[9px] font-bold">{nfeData.ide?.natOp}</div>
+              </div>
+              <div className="col-span-3 border-r border-black p-1">
+                <div className="text-[7px]">CNPJ / CPF</div>
+                <div className="text-[9px] font-bold">{nfeData.emit?.CNPJ ?? nfeData.emit?.CPF}</div>
+              </div>
+              <div className="col-span-3 p-1">
+                <div className="text-[7px]">INSCRIÇÃO ESTADUAL</div>
+                <div className="text-[9px] font-bold">{nfeData.emit?.IE}</div>
+              </div>
+            </div>
+          </div>
 
-        {/* ====== DADOS ADICIONAIS ====== */}
-        <div className="danfe-box" style={{ marginTop: "2mm", padding: "1.5mm" }}>
-          <div className="danfe-small danfe-title">DADOS ADICIONAIS</div>
+          {/* ===== DESTINATÁRIO ===== */}
+          <div data-pdf-section className="border border-black danfe-avoid-break" style={{ marginBottom: "2mm" }}>
+            <div className="p-1 text-[7px] font-bold border-b border-black">DESTINATÁRIO / REMETENTE</div>
+            <div className="grid grid-cols-12">
+              <div className="col-span-7 border-r border-black p-1">
+                <div className="text-[7px]">NOME / RAZÃO SOCIAL</div>
+                <div className="text-[9px] font-bold">{nfeData.dest?.xNome}</div>
+              </div>
+              <div className="col-span-3 border-r border-black p-1">
+                <div className="text-[7px]">CNPJ / CPF</div>
+                <div className="text-[9px] font-bold">{nfeData.dest?.CNPJ ?? nfeData.dest?.CPF}</div>
+              </div>
+              <div className="col-span-2 p-1">
+                <div className="text-[7px]">DATA DA EMISSÃO</div>
+                <div className="text-[9px] font-bold">{formatDate(nfeData.ide?.dhEmi)}</div>
+              </div>
+            </div>
+            <div className="grid grid-cols-12 border-t border-black">
+              <div className="col-span-6 border-r border-black p-1">
+                <div className="text-[7px]">ENDEREÇO</div>
+                <div className="text-[8px]">
+                  {nfeData.dest?.enderDest?.xLgr}, {nfeData.dest?.enderDest?.nro} – {nfeData.dest?.enderDest?.xBairro}
+                </div>
+              </div>
+              <div className="col-span-2 border-r border-black p-1">
+                <div className="text-[7px]">MUNICÍPIO</div>
+                <div className="text-[8px]">{nfeData.dest?.enderDest?.xMun}</div>
+              </div>
+              <div className="col-span-1 border-r border-black p-1">
+                <div className="text-[7px]">UF</div>
+                <div className="text-[8px]">{nfeData.dest?.enderDest?.UF}</div>
+              </div>
+              <div className="col-span-3 p-1">
+                <div className="text-[7px]">INSCRIÇÃO ESTADUAL</div>
+                <div className="text-[8px]">{nfeData.dest?.IE}</div>
+              </div>
+            </div>
+          </div>
 
-          <div className="danfe-row" style={{ marginTop: "1mm" }}>
-            <div className="danfe-col danfe-box" style={{ padding: "1mm", minHeight: "22mm" }}>
-              <div className="danfe-small danfe-title">INFORMAÇÕES COMPLEMENTARES</div>
-              <div className="danfe-small" style={{ whiteSpace: "pre-wrap" }}>
-                {safe((nfe as any)?.infAdic?.infCpl)}
+          {/* ===== TOTAIS (resumo) ===== */}
+          <div data-pdf-section className="border border-black danfe-avoid-break" style={{ marginBottom: "2mm" }}>
+            <div className="grid grid-cols-12">
+              <div className="col-span-3 border-r border-black p-1">
+                <div className="text-[7px]">BASE CÁLC. ICMS</div>
+                <div className="text-[9px] font-bold">{formatMoney(nfeData.total?.vBC ?? 0)}</div>
+              </div>
+              <div className="col-span-2 border-r border-black p-1">
+                <div className="text-[7px]">VALOR ICMS</div>
+                <div className="text-[9px] font-bold">{formatMoney(nfeData.total?.vICMS ?? 0)}</div>
+              </div>
+              <div className="col-span-3 border-r border-black p-1">
+                <div className="text-[7px]">BASE ICMS ST</div>
+                <div className="text-[9px] font-bold">{formatMoney(nfeData.total?.vBCST ?? 0)}</div>
+              </div>
+              <div className="col-span-2 border-r border-black p-1">
+                <div className="text-[7px]">VALOR ST</div>
+                <div className="text-[9px] font-bold">{formatMoney(nfeData.total?.vST ?? 0)}</div>
+              </div>
+              <div className="col-span-2 p-1">
+                <div className="text-[7px]">VLR PRODUTOS</div>
+                <div className="text-[9px] font-bold">{formatMoney(nfeData.total?.vProd ?? 0)}</div>
               </div>
             </div>
 
-            <div className="danfe-col danfe-box" style={{ padding: "1mm", minHeight: "22mm" }}>
-              <div className="danfe-small danfe-title">RESERVADO AO FISCO</div>
-              <div className="danfe-small" style={{ whiteSpace: "pre-wrap" }}>
-                {safe((nfe as any)?.infAdic?.infAdFisco)}
+            <div className="grid grid-cols-12 border-t border-black">
+              <div className="col-span-3 border-r border-black p-1">
+                <div className="text-[7px]">FRETE</div>
+                <div className="text-[9px] font-bold">{formatMoney(nfeData.total?.vFrete ?? 0)}</div>
+              </div>
+              <div className="col-span-3 border-r border-black p-1">
+                <div className="text-[7px]">SEGURO</div>
+                <div className="text-[9px] font-bold">{formatMoney(nfeData.total?.vSeg ?? 0)}</div>
+              </div>
+              <div className="col-span-2 border-r border-black p-1">
+                <div className="text-[7px]">DESCONTO</div>
+                <div className="text-[9px] font-bold">{formatMoney(nfeData.total?.vDesc ?? 0)}</div>
+              </div>
+              <div className="col-span-2 border-r border-black p-1">
+                <div className="text-[7px]">OUTROS</div>
+                <div className="text-[9px] font-bold">{formatMoney(nfeData.total?.vOutro ?? 0)}</div>
+              </div>
+              <div className="col-span-2 p-1">
+                <div className="text-[7px]">VALOR TOTAL DA NOTA</div>
+                <div className="text-[9px] font-bold">{formatMoney(nfeData.total?.vNF ?? 0)}</div>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* ====== RODAPÉ ====== */}
-        <div className="danfe-small" style={{ marginTop: "2mm", display: "flex", justifyContent: "space-between" }}>
-          <div style={{ opacity: 0.6 }}>
-            {qrCodeUrl ? qrCodeUrl : ""}
+          {/* ===== ITENS ===== */}
+          <div data-pdf-section className="border border-black danfe-avoid-break" style={{ marginBottom: "2mm" }}>
+            <div className="p-1 text-[7px] font-bold border-b border-black">DADOS DO PRODUTO / SERVIÇO</div>
+            <table className="w-full text-[7px]" style={{ borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th className="border border-black p-1">CÓD.</th>
+                  <th className="border border-black p-1 text-left">DESCRIÇÃO</th>
+                  <th className="border border-black p-1">NCM/SH</th>
+                  <th className="border border-black p-1">CFOP</th>
+                  <th className="border border-black p-1">UN</th>
+                  <th className="border border-black p-1">QTD.</th>
+                  <th className="border border-black p-1">V. UNIT.</th>
+                  <th className="border border-black p-1">V. TOTAL</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(nfeData.det || []).map((it, idx) => (
+                  <tr key={idx}>
+                    <td className="border border-black p-1 text-center">{it.prod?.cProd}</td>
+                    <td className="border border-black p-1">{it.prod?.xProd}</td>
+                    <td className="border border-black p-1 text-center">{it.prod?.NCM}</td>
+                    <td className="border border-black p-1 text-center">{it.prod?.CFOP}</td>
+                    <td className="border border-black p-1 text-center">{it.prod?.uCom}</td>
+                    <td className="border border-black p-1 text-right">
+                      {Number(it.prod?.qCom ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="border border-black p-1 text-right">{formatMoney(Number(it.prod?.vUnCom ?? 0))}</td>
+                    <td className="border border-black p-1 text-right">{formatMoney(Number(it.prod?.vProd ?? 0))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <div style={{ opacity: 0.6 }}>
-            {dataEmissao}, {horaEmissao} — Página 1 de 1
+
+          {/* ===== ESTE CARA AQUI VAI “COMPLETAR” O A4 ===== */}
+          <div className="danfe-spacer" />
+
+          {/* ===== DADOS ADICIONAIS (fica “ancorado” mais embaixo) ===== */}
+          <div data-pdf-section className="border border-black danfe-avoid-break">
+            <div className="grid grid-cols-12">
+              <div className="col-span-8 border-r border-black p-1">
+                <div className="text-[7px] font-bold">DADOS ADICIONAIS</div>
+                <div className="text-[7px] mt-1 whitespace-pre-wrap">{nfeData.infAdic?.infCpl ?? ""}</div>
+              </div>
+              <div className="col-span-4 p-1">
+                <div className="text-[7px] font-bold">RESERVADO AO FISCO</div>
+                <div className="text-[7px] mt-1 whitespace-pre-wrap">{nfeData.infAdic?.infAdFisco ?? ""}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* ===== RODAPÉ ===== */}
+          <div className="text-[7px] mt-1 flex justify-between">
+            <div className="opacity-70">{nfeData.urlDanfe ?? ""}</div>
+            <div className="opacity-70">
+              {formatDate(new Date().toISOString())} &nbsp; Página 1 de 1
+            </div>
           </div>
         </div>
       </div>
-    </>
-  );
-};
+    );
+  }
+);
 
+DanfePreview.displayName = "DanfePreview";
 export default DanfePreview;
