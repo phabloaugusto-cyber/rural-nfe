@@ -60,52 +60,16 @@ interface DanfeData {
   protocoloAutorizacao?: string;
 }
 
+const MM_TO_PX = 96 / 25.4;
+
 const A4 = {
   widthMm: 210,
   heightMm: 297,
-  marginMm: 6, // margem real na impressão
+  marginMm: 6, // ajuste fino aqui (margem “real”)
 };
 
-function calcDensity(itemCount: number, infoLen: number) {
-  // Objetivo: 1 página.
-  // Poucos itens => mais espaçamento.
-  // Muitos itens ou info grande => compacta.
-
-  if (itemCount <= 1 && infoLen < 250) {
-    return {
-      fontSize: "11px",
-      cellPad: "3px 4px",
-      lineHeight: "1.25",
-      // força o “miolo” ocupar a altura do A4
-      minPageHeight: `${A4.heightMm - A4.marginMm * 2}mm`,
-    };
-  }
-
-  if (itemCount <= 3 && infoLen < 600) {
-    return {
-      fontSize: "10.5px",
-      cellPad: "2.5px 3.5px",
-      lineHeight: "1.22",
-      minPageHeight: `${A4.heightMm - A4.marginMm * 2}mm`,
-    };
-  }
-
-  if (itemCount <= 8 && infoLen < 1000) {
-    return {
-      fontSize: "10px",
-      cellPad: "2px 3px",
-      lineHeight: "1.18",
-      minPageHeight: `${A4.heightMm - A4.marginMm * 2}mm`,
-    };
-  }
-
-  // “modo compacto” (muitos itens / info enorme)
-  return {
-    fontSize: "9.25px",
-    cellPad: "1.5px 2.5px",
-    lineHeight: "1.12",
-    minPageHeight: `${A4.heightMm - A4.marginMm * 2}mm`,
-  };
+function mmToPx(mm: number) {
+  return mm * MM_TO_PX;
 }
 
 const DanfePage = () => {
@@ -117,7 +81,16 @@ const DanfePage = () => {
   const [generating, setGenerating] = useState(false);
   const [dataSaida, setDataSaida] = useState("");
 
-  const danfeRef = useRef<HTMLDivElement>(null);
+  // refs do layout A4
+  const pageRef = useRef<HTMLDivElement>(null); // caixa A4 “útil”
+  const contentRef = useRef<HTMLDivElement>(null); // conteúdo real do DanfePreview
+
+  const [scale, setScale] = useState(1);
+
+  const isMobile = useMemo(
+    () => /iPhone|iPad|iPod|Android/i.test(navigator.userAgent),
+    []
+  );
 
   useEffect(() => {
     if (!notaId) return;
@@ -208,54 +181,72 @@ const DanfePage = () => {
     fetch();
   }, [notaId]);
 
-  const density = useMemo(() => {
-    const itemCount = data?.itens?.length || 0;
-    const infoLen = (data?.informacoesAdicionais || "").length;
-    return calcDensity(itemCount, infoLen);
-  }, [data]);
+  // Auto-scale: cabe em 1 página A4 (área útil)
+  useEffect(() => {
+    if (!data) return;
 
-  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    const recompute = () => {
+      const pageEl = pageRef.current;
+      const contentEl = contentRef.current;
+      if (!pageEl || !contentEl) return;
+
+      // área útil dentro da página (sem margens)
+      const targetW = mmToPx(A4.widthMm - A4.marginMm * 2);
+      const targetH = mmToPx(A4.heightMm - A4.marginMm * 2);
+
+      // tamanho real do conteúdo
+      // (usa scrollWidth/scrollHeight pra pegar o tamanho “natural”)
+      const contentW = contentEl.scrollWidth || contentEl.getBoundingClientRect().width;
+      const contentH = contentEl.scrollHeight || contentEl.getBoundingClientRect().height;
+
+      if (!contentW || !contentH) return;
+
+      const scaleW = targetW / contentW;
+      const scaleH = targetH / contentH;
+
+      // pega o menor pra caber largura e altura
+      let next = Math.min(scaleW, scaleH);
+
+      // limites: evita ficar gigante demais ou pequeno demais
+      next = Math.max(0.65, Math.min(next, 1.35));
+
+      setScale(next);
+    };
+
+    // roda agora e também quando o layout muda
+    recompute();
+
+    const ro = new ResizeObserver(() => recompute());
+    if (contentRef.current) ro.observe(contentRef.current);
+
+    // pequeno delay porque às vezes fontes/imagens carregam depois
+    const t = window.setTimeout(recompute, 150);
+
+    return () => {
+      window.clearTimeout(t);
+      ro.disconnect();
+    };
+  }, [data, dataSaida]);
 
   const generatePdfBlob = async (): Promise<Blob | null> => {
-    if (!danfeRef.current) return null;
+    if (!pageRef.current) return null;
 
-    // Antes de capturar, garante “modo print” (para respeitar mm e A4)
-    document.documentElement.classList.add("danfe-force-print");
-    await new Promise((r) => setTimeout(r, 50));
-
-    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-
-    const canvas = await html2canvas(danfeRef.current, {
+    // captura a página A4 inteira (já com scale aplicado)
+    const canvas = await html2canvas(pageRef.current, {
       scale: 2,
       backgroundColor: "#ffffff",
       useCORS: true,
-      windowWidth: danfeRef.current.scrollWidth,
-      windowHeight: danfeRef.current.scrollHeight,
     });
 
     const imgData = canvas.toDataURL("image/png");
+    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
 
-    const pageW = A4.widthMm;
-    const pageH = A4.heightMm;
-    const margin = A4.marginMm;
+    const pdfW = pdf.internal.pageSize.getWidth();
+    const pdfH = pdf.internal.pageSize.getHeight();
 
-    const contentW = pageW - margin * 2;
-    const contentH = pageH - margin * 2;
+    // encaixa 100% no A4
+    pdf.addImage(imgData, "PNG", 0, 0, pdfW, pdfH);
 
-    // Ajusta a imagem para caber no conteúdo A4
-    const imgW = contentW;
-    const imgH = (canvas.height * imgW) / canvas.width;
-
-    // Se por algum motivo passar de 1 página, reduz a escala para caber numa só
-    const finalH = Math.min(imgH, contentH);
-    const finalW = (finalH * canvas.width) / canvas.height;
-
-    const x = (pageW - finalW) / 2;
-    const y = margin;
-
-    pdf.addImage(imgData, "PNG", x, y, finalW, finalH);
-
-    document.documentElement.classList.remove("danfe-force-print");
     return pdf.output("blob");
   };
 
@@ -288,130 +279,76 @@ const DanfePage = () => {
 
   return (
     <AppLayout>
-      {/* CSS do DANFE fica aqui (injeção local) */}
+      {/* Estilos A4 + impressão */}
       <style>{`
-        /* ======= PRINT A4 REAL ======= */
         @page {
           size: A4;
-          margin: ${A4.marginMm}mm;
+          margin: 0;
         }
-
-        /* Evita “margem extra” do navegador */
         @media print {
-          html, body {
-            background: #fff !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-            margin: 0 !important;
-            padding: 0 !important;
+          body {
+            background: #ffffff !important;
           }
-
-          /* Esconde layout do app e deixa só a área do danfe */
-          .app-layout-shell,
-          header,
-          nav,
-          aside,
-          .no-print {
+          #app-header, #app-sidebar, #danfe-actions {
             display: none !important;
           }
-
-          #danfe-print-area-wrapper {
+          #danfe-screen-wrapper {
+            padding: 0 !important;
             border: none !important;
             box-shadow: none !important;
-            padding: 0 !important;
-            overflow: visible !important;
+            background: #ffffff !important;
+          }
+          #danfe-outer {
+            display: block !important;
           }
         }
 
-        /* ======= A4 no SCREEN (preview) ======= */
-        :root {
-          --danfe-font-size: ${density.fontSize};
-          --danfe-cell-pad: ${density.cellPad};
-          --danfe-line-height: ${density.lineHeight};
-          --danfe-min-page-height: ${density.minPageHeight};
-        }
-
-        /* Tamanho físico do A4 na tela */
-        #danfe-print-area {
+        /* A4 container */
+        #danfe-outer {
           width: ${A4.widthMm}mm;
-          /* altura mínima do conteúdo (sem “estourar”) */
-          min-height: var(--danfe-min-page-height);
+          height: ${A4.heightMm}mm;
           background: #fff;
-          color: #000;
-          margin: 0 auto;
         }
 
-        /* O componente (primeiro filho) vira uma “página” */
-        #danfe-print-area > * {
-          width: 100%;
-          min-height: var(--danfe-min-page-height);
-          box-sizing: border-box;
-          display: flex;
-          flex-direction: column;
-        }
-
-        /* Tentativa de “empurrar” o último bloco para o rodapé (normalmente Infos Adicionais) */
-        #danfe-print-area > * > :last-child {
-          margin-top: auto;
-        }
-
-        /* Ajustes genéricos (funciona bem se DanfePreview usar tables/divs) */
-        #danfe-print-area, 
-        #danfe-print-area * {
-          box-sizing: border-box;
-          font-size: var(--danfe-font-size);
-          line-height: var(--danfe-line-height);
-        }
-
-        #danfe-print-area table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-
-        #danfe-print-area td,
-        #danfe-print-area th {
-          padding: var(--danfe-cell-pad);
-        }
-
-        /* Evita quebra de linha estranha na impressão */
-        @media print {
-          #danfe-print-area {
-            width: ${A4.widthMm - A4.marginMm * 2}mm;
-            min-height: ${A4.heightMm - A4.marginMm * 2}mm;
-            margin: 0 !important;
-          }
-
-          #danfe-print-area > * {
-            min-height: ${A4.heightMm - A4.marginMm * 2}mm;
-          }
-
-          /* Garante “1 página” ao máximo */
-          #danfe-print-area, #danfe-print-area * {
-            page-break-inside: avoid !important;
-          }
-        }
-
-        /* Ajuda html2canvas/pdf a pegar no “modo print” */
-        .danfe-force-print #danfe-print-area {
+        /* Área útil (com margens) */
+        #danfe-page {
           width: ${A4.widthMm - A4.marginMm * 2}mm;
-          margin: 0 !important;
+          height: ${A4.heightMm - A4.marginMm * 2}mm;
+          margin: ${A4.marginMm}mm;
+          overflow: hidden;
+          position: relative;
+        }
+
+        /* Conteúdo escalado */
+        #danfe-scaled {
+          transform-origin: top left;
+          transform: scale(${scale});
+          width: fit-content;
+        }
+
+        /* Só pra ficar bonito na tela */
+        #danfe-screen-wrapper {
+          background: #fff;
         }
       `}</style>
 
-      <div className="mb-6 flex items-center justify-between no-print">
+      <div className="mb-6 flex items-center justify-between" id="danfe-actions">
         <div>
           <h2 className="text-2xl font-semibold text-foreground">DANFE</h2>
           <p className="text-sm text-muted-foreground">
             {notaId ? "Visualização da DANFE da nota fiscal" : "Selecione uma nota fiscal para visualizar o DANFE"}
           </p>
         </div>
-
         <div className="flex gap-2">
           <Button variant="outline" onClick={handlePrint}>
             <Printer className="mr-2 h-4 w-4" /> Imprimir
           </Button>
           <Button onClick={handleDownloadPDF} disabled={generating}>
-            {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+            {generating ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="mr-2 h-4 w-4" />
+            )}
             Baixar PDF
           </Button>
         </div>
@@ -428,11 +365,30 @@ const DanfePage = () => {
         </div>
       ) : (
         <div
-          id="danfe-print-area-wrapper"
+          id="danfe-screen-wrapper"
           className="overflow-auto rounded-lg border border-border bg-white p-4 shadow-sm print:border-none print:p-0 print:shadow-none print:overflow-visible"
         >
-          <div ref={danfeRef} id="danfe-print-area">
-            <DanfePreview {...data} dataSaida={dataSaida} onDataSaidaChange={setDataSaida} />
+          {/* “Folha A4” */}
+          <div
+            id="danfe-outer"
+            className="mx-auto"
+            style={{
+              // na tela, dá um respiro e evita colar nas bordas
+              boxShadow: isMobile ? "none" : "0 10px 30px rgba(0,0,0,0.08)",
+            }}
+          >
+            <div id="danfe-page" ref={pageRef}>
+              <div id="danfe-scaled">
+                <div ref={contentRef}>
+                  <DanfePreview {...data} dataSaida={dataSaida} onDataSaidaChange={setDataSaida} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* dica visual (só tela) */}
+          <div className="mt-3 text-center text-xs text-muted-foreground print:hidden">
+            Ajuste automático ativo (scale: {scale.toFixed(2)}). Se tiver muitos itens, ele reduz para caber em 1 página.
           </div>
         </div>
       )}
